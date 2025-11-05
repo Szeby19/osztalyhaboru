@@ -9,6 +9,7 @@
   // --- Firebase / Leaderboard helpers ---
   let db = null;
   let firebaseHelpers = null;
+  let auth = null;
   let firebaseInited = false;
 
   async function initFirebaseIfNeeded() {
@@ -16,6 +17,7 @@
     try {
       const { initializeApp } = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js');
       const firestore = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js');
+      const firebaseAuth = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js');
 
       const firebaseConfig = {
         apiKey: "AIzaSyD2-M33AAOllM_7lC0PCWvME7OyHw3p2qo",
@@ -29,12 +31,88 @@
 
       const app = initializeApp(firebaseConfig);
       db = firestore.getFirestore(app);
+      auth = firebaseAuth.getAuth(app);
       firebaseHelpers = firestore;
       firebaseInited = true;
       console.log('Firebase initialized for leaderboard');
     } catch (e) {
       console.error('Failed to initialize Firebase:', e);
     }
+  }
+
+  // --- Authentication UI wiring ---
+  function showAuthOverlay(){
+    const overlay = document.getElementById('auth-overlay');
+    if(overlay) overlay.style.display = 'flex';
+  }
+  function hideAuthOverlay(){
+    const overlay = document.getElementById('auth-overlay');
+    if(overlay) overlay.style.display = 'none';
+  }
+
+  function setAuthMessage(msg, color){
+    const el = document.getElementById('auth-msg');
+    if(!el) return; el.textContent = msg || '';
+    if(color) el.style.color = color; else el.style.color = '#ffcccb';
+  }
+
+  // Login using a username (we synthesize an email to work with Firebase Auth)
+  async function doLogin(username, pass){
+    const email = synthesizeEmailFromUsername(username);
+    await initFirebaseIfNeeded();
+    if(!auth){ setAuthMessage('Auth nem elérhető. Ellenőrizd a Firebase beállítást (Email/Password engedélyezése, localhost domain hozzáadása).'); return; }
+    try{
+      const { signInWithEmailAndPassword } = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js');
+      const cred = await signInWithEmailAndPassword(auth, email, pass);
+      const user = cred.user;
+  localStorage.setItem('isLoggedIn','true');
+  localStorage.setItem('playerName', user.displayName || username);
+  // Load the player's progress from Firestore
+  try{ await loadProgressForUser(user.uid); }catch(e){ console.warn('loadProgressForUser failed after login', e); }
+      setAuthMessage('Sikeres bejelentkezés!', '#a6f3b1');
+      hideAuthOverlay();
+      drawMenu();
+    }catch(e){
+      console.error(e);
+      if(e && e.code === 'auth/configuration-not-found'){
+        setAuthMessage('Firebase Auth nincs teljesen beállítva. Kapcsold be az Email/Jelszó bejelentkezést a Firebase Console -> Authentication -> Sign-in method, és add hozzá a localhost-ot az Authorized domains listához.');
+      } else {
+        setAuthMessage('Bejelentkezés sikertelen: '+(e.message||e));
+      }
+    }
+  }
+
+  // Register using a username and password. We create a synthetic email so Firebase Auth (email/password) can be used.
+  async function doRegister(username, pass){
+    const email = synthesizeEmailFromUsername(username);
+    await initFirebaseIfNeeded();
+    if(!auth){ setAuthMessage('Auth nem elérhető. Ellenőrizd a Firebase beállítást (Email/Password engedélyezése, localhost domain hozzáadása).'); return; }
+    try{
+      const { createUserWithEmailAndPassword, updateProfile } = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js');
+      const cred = await createUserWithEmailAndPassword(auth, email, pass);
+      const user = cred.user;
+      // set display name
+      try{ await updateProfile(user, { displayName: username }); }catch(e){}
+      // store a minimal user doc in Firestore for profile lookups
+      try{ await initFirebaseIfNeeded(); const col = firebaseHelpers.collection(db, 'users'); await firebaseHelpers.addDoc(col, { uid: user.uid, name: username, email, created: Date.now() }); }catch(e){/* non-fatal */}
+  localStorage.setItem('isLoggedIn','true');
+  localStorage.setItem('playerName', username || email);
+  // Initialize and load player's progress doc
+  try{ await loadProgressForUser(user.uid); }catch(e){ console.warn('loadProgressForUser failed after register', e); }
+      setAuthMessage('Regisztráció sikeres! Be vagy jelentkezve.', '#a6f3b1');
+      hideAuthOverlay();
+      drawMenu();
+    }catch(e){ console.error(e); if(e && e.code === 'auth/configuration-not-found'){ setAuthMessage('Firebase Auth nincs teljesen beállítva. Kapcsold be az Email/Jelszó bejelentkezést a Firebase Console -> Authentication -> Sign-in method, és add hozzá a localhost-ot az Authorized domains listához.'); } else { setAuthMessage('Regisztráció sikertelen: '+(e.message||e)); } }
+  }
+
+  // Create a synthetic email from a username. This allows us to use Firebase Email/Password without asking the user for a real email.
+  function synthesizeEmailFromUsername(username){
+    if(!username) return 'user_'+Math.random().toString(36).slice(2,9)+'@osztaly.local';
+    let s = username.trim().toLowerCase();
+    s = s.replace(/\s+/g,'_');
+    s = s.replace(/[^a-z0-9_\-\.]/g,'_');
+    if(s.length < 2) s = 'u_'+s+Math.random().toString(36).slice(2,6);
+    return `${s}@osztaly.local`;
   }
 
   // Draw leaderboard fetched from Firestore
@@ -82,15 +160,55 @@
   }
 
   // submit player's result: name, level (highest completed), and points (total collected)
+  // Stores a single leaderboard document per Firebase user (uid). If the user already has a doc,
+  // only update it when the new result is strictly better (higher level, or same level but more points).
   async function submitScoreToFirestore(name, level = 0, points = 0) {
     await initFirebaseIfNeeded();
     if (!firebaseInited) return;
     try {
       const col = firebaseHelpers.collection(db, 'leaderboard');
-      await firebaseHelpers.addDoc(col, { name: name || 'Anon', level: Number(level) || 0, points: Number(points) || 0, ts: Date.now() });
-      console.log('Submitted result', name, level, points);
+      // If we have an authenticated user, prefer to store/update by uid
+      const uid = (auth && auth.currentUser) ? auth.currentUser.uid : null;
+      if(uid){
+        // look for existing leaderboard entry for this uid
+        const q = firebaseHelpers.query(col, firebaseHelpers.where('uid','==', uid));
+        const snap = await firebaseHelpers.getDocs(q);
+        if(snap && !snap.empty){
+          // assume single doc per uid; take first
+          const docSnap = snap.docs[0];
+          const data = docSnap.data();
+          const oldLevel = Number(data.level||0);
+          const oldPoints = Number(data.points||0);
+          const newLevel = Number(level||0);
+          const newPoints = Number(points||0);
+          // only update if new result is better
+          if(newLevel > oldLevel || (newLevel === oldLevel && newPoints > oldPoints)){
+            try{
+              await firebaseHelpers.updateDoc(docSnap.ref, { name: name || data.name || 'Anon', level: newLevel, points: newPoints, ts: Date.now() });
+              console.log('Updated leaderboard doc for uid', uid, newLevel, newPoints);
+            }catch(e){
+              // fallback to set (merge)
+              try{ await firebaseHelpers.setDoc(docSnap.ref, { name: name || data.name || 'Anon', level: newLevel, points: newPoints, ts: Date.now() }, { merge: true }); }catch(e2){ console.error('Failed to update leaderboard doc', e2); }
+            }
+          } else {
+            console.log('Not updating leaderboard; existing score is better or equal for uid', uid);
+          }
+        } else {
+          // create new doc with uid
+          try{
+            await firebaseHelpers.addDoc(col, { uid, name: name || 'Anon', level: Number(level) || 0, points: Number(points) || 0, ts: Date.now() });
+            console.log('Added leaderboard doc for uid', uid, level, points);
+          }catch(e){ console.error('Failed to add leaderboard doc for uid', e); }
+        }
+      } else {
+        // no uid (not authenticated) - fallback: add a new entry (cannot dedupe reliably)
+        try{
+          await firebaseHelpers.addDoc(col, { name: name || 'Anon', level: Number(level) || 0, points: Number(points) || 0, ts: Date.now() });
+          console.log('Submitted result (no uid)', name, level, points);
+        }catch(e){ console.error('Failed to submit result:', e); }
+      }
     } catch (e) {
-      console.error('Failed to submit result:', e);
+      console.error('Failed to submit result (outer):', e);
     }
   }
 
@@ -228,7 +346,53 @@ function saveProgress() {
     unlockedMusic: unlockedMusic,
     dlcCharacters: dlcCharacters
   };
-  localStorage.setItem('gameProgress', JSON.stringify(gameProgress));
+  // keep a local copy for offline fallback
+  try{ localStorage.setItem('gameProgress', JSON.stringify(gameProgress)); }catch(e){}
+  // also persist to Firestore for the logged-in user (fire-and-forget)
+  try{ saveProgressToFirestore(); }catch(e){ /* non-fatal */ }
+}
+
+// Firestore-backed save (per-account)
+async function saveProgressToFirestore(){
+  try{
+    await initFirebaseIfNeeded();
+    if(!firebaseInited || !auth) return;
+    const user = auth.currentUser;
+    if(!user) return;
+    const docRef = firebaseHelpers.doc(db, 'users', user.uid);
+    const data = { totalPoints: Number(totalPoints||0), vBucks: Number(vBucks||0), unlockedMusic: unlockedMusic || [], dlcCharacters: dlcCharacters || [], updated: Date.now() };
+    await firebaseHelpers.setDoc(docRef, data, { merge: true });
+  }catch(e){ console.warn('Failed to save progress to Firestore', e); }
+}
+
+// Load progress for a given user id from Firestore. Falls back to localStorage when missing.
+async function loadProgressForUser(uid){
+  try{
+    await initFirebaseIfNeeded();
+    if(!firebaseInited) return loadProgress();
+    const docRef = firebaseHelpers.doc(db, 'users', uid);
+    const snap = await firebaseHelpers.getDoc(docRef);
+    if(snap && snap.exists && snap.data()){
+      const d = snap.data();
+      totalPoints = Number(d.totalPoints || 0);
+      vBucks = Number(d.vBucks || 0);
+      unlockedMusic = Array.isArray(d.unlockedMusic) ? d.unlockedMusic : [];
+      // reconcile dlcCharacters locked state if provided
+      if(Array.isArray(d.dlcCharacters)){
+        d.dlcCharacters.forEach((savedChar, index)=>{
+          if(index < dlcCharacters.length && typeof savedChar.locked === 'boolean'){
+            dlcCharacters[index].locked = savedChar.locked;
+          }
+        });
+      }
+      musicList = [...baseMusicList, ...premiumMusicList.filter(m => unlockedMusic.includes(m.src))];
+      // update any UI that shows currency
+      drawMenu();
+      return;
+    }
+  }catch(e){ console.warn('Failed to load user progress from Firestore', e); }
+  // fallback to local storage
+  loadProgress();
 }
 
 function loadProgress() {
@@ -836,21 +1000,16 @@ function loop(ts) {
   function handleUIButton(b, mx, my){ 
     if(scene==='menu'){ 
       if(b.action==='start'){ 
-        // if not logged in, ask for a name and save it together with an initial score
-        try {
+        // Require login before starting. If not logged in, show auth overlay.
+        try{
           const isLogged = localStorage.getItem('isLoggedIn');
           if(isLogged !== 'true'){
-            const name = prompt('Kérlek add meg a neved a ranglistához:');
-            if(name && name.trim()){ 
-              localStorage.setItem('playerName', name.trim());
-              localStorage.setItem('isLoggedIn', 'true');
-              // submit initial entry to leaderboard with current totalPoints and level 0
-              submitScoreToFirestore(name.trim(), 0, totalPoints);
-            }
+            showAuthOverlay();
+            return;
           }
-        } catch(e){ console.warn('localStorage or prompt failed', e); }
+        }catch(e){ showAuthOverlay(); return; }
 
-        scene='charSelect'; 
+        scene='charSelect';
         drawCharSelect();
       } else if(b.action==='leaderboard'){
         drawLeaderboard();
@@ -955,13 +1114,15 @@ function loop(ts) {
  function loadSounds(){ try{ catchSound = loadAudio('assets/sounds/catch.mp3'); }catch(e){ catchSound=null; } }
   function spawnNpcsForLevel(l, selectedIdx){ 
     const lanes = 5; 
+    // Do not use the bottom-most lane for NPCs to avoid immediate collisions when changing levels
+    const usableLanes = Math.max(1, lanes-1);
     const laneH = (H-120)/lanes; 
     npcs = []; 
     const pool=[]; 
     for(let i=0;i<characters.length;i++) if(i!==selectedIdx) pool.push(i); 
     
     // Spawn NPCs in lanes
-    for(let lane=0;lane<lanes;lane++){ 
+    for(let lane=0;lane<usableLanes;lane++){ 
       const y = 60 + lane*laneH + (laneH-60)/2; 
       const dir = (lane%2===0)?1:-1; 
       const count = 4 + Math.min(level,3); 
@@ -974,7 +1135,7 @@ function loop(ts) {
     }
 
     // Spawn V-Buck for this level
-    const randomLane = Math.floor(Math.random() * lanes);
+    const randomLane = Math.floor(Math.random() * usableLanes);
     const vbuckY = 60 + randomLane*laneH + (laneH-30)/2;
     const vbuckX = Math.random() * (W-30);
     vbuck = {
@@ -1099,4 +1260,94 @@ function loop(ts) {
   
   // expose debug helper
   window.__startGameDebug = startGame;
+
+  // Wire auth overlay controls
+  (function wireAuthUI(){
+    // safe-guard if elements missing
+    try{
+      // Ensure Firebase is initialized and listen for auth state changes so we can load per-account progress
+      (async function(){
+        try{
+          await initFirebaseIfNeeded();
+          if(auth){
+            const { onAuthStateChanged } = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js');
+            onAuthStateChanged(auth, async (user)=>{
+              try{
+                if(user){
+                  localStorage.setItem('isLoggedIn','true');
+                  localStorage.setItem('playerName', user.displayName || user.email || '');
+                  await loadProgressForUser(user.uid);
+                  hideAuthOverlay();
+                  drawMenu();
+                } else {
+                  localStorage.removeItem('isLoggedIn');
+                  showAuthOverlay();
+                }
+              }catch(e){ console.warn('onAuthStateChanged handler error', e); }
+            });
+          }
+        }catch(e){ /* ignore init errors here */ }
+      })();
+
+      const showReg = document.getElementById('show-register');
+      const showLog = document.getElementById('show-login');
+      const loginForm = document.getElementById('login-form');
+      const registerForm = document.getElementById('register-form');
+  const loginBtn = document.getElementById('login-btn');
+  const regBtn = document.getElementById('reg-btn');
+  const logoutBtn = document.getElementById('logout-btn');
+  const overlay = document.getElementById('auth-overlay');
+
+      if(showReg) showReg.addEventListener('click', (e)=>{ e.preventDefault(); if(loginForm) loginForm.style.display='none'; if(registerForm) registerForm.style.display='flex'; document.getElementById('auth-title').textContent='Regisztráció'; setAuthMessage(''); });
+      if(showLog) showLog.addEventListener('click', (e)=>{ e.preventDefault(); if(loginForm) loginForm.style.display='flex'; if(registerForm) registerForm.style.display='none'; document.getElementById('auth-title').textContent='Belépés'; setAuthMessage(''); });
+
+      if(loginBtn) loginBtn.addEventListener('click', ()=>{
+        const username = document.getElementById('login-username').value.trim();
+        const pass = document.getElementById('login-pass').value;
+        if(!username || !pass){ setAuthMessage('Töltsd ki a felhasználónevet és jelszót.'); return; }
+        setAuthMessage('Bejelentkezés...','');
+        doLogin(username, pass);
+      });
+
+      if(regBtn) regBtn.addEventListener('click', ()=>{
+        const name = document.getElementById('reg-name').value.trim();
+        const pass = document.getElementById('reg-pass').value;
+        if(!name || !pass){ setAuthMessage('Töltsd ki a mezőket.'); return; }
+        setAuthMessage('Regisztráció...','');
+        doRegister(name, pass);
+      });
+
+      // Wire logout button (DOM button was added to index.html). Initially hidden unless logged in.
+      if(logoutBtn){
+        try{ logoutBtn.style.display = (localStorage.getItem('isLoggedIn') === 'true') ? 'block' : 'none'; }catch(e){}
+        logoutBtn.addEventListener('click', async ()=>{
+          try{
+            if(auth){ const { signOut } = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js'); await signOut(auth); }
+          }catch(e){ console.warn('SignOut failed', e); }
+          try{ localStorage.removeItem('isLoggedIn'); localStorage.removeItem('playerName'); }catch(e){}
+          // hide logout button and show auth overlay
+          try{ logoutBtn.style.display='none'; }catch(e){}
+          showAuthOverlay(); drawMenu();
+        });
+      }
+
+      // Also watch auth state to toggle logout button visibility
+      (async function(){
+        try{
+          await initFirebaseIfNeeded();
+          if(auth){ const { onAuthStateChanged } = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js'); onAuthStateChanged(auth, (user)=>{ try{ if(logoutBtn) logoutBtn.style.display = user ? 'block' : 'none'; }catch(e){} }); }
+        }catch(e){ /* ignore */ }
+      })();
+
+      // Show overlay if user not logged in
+      try{
+        const isLogged = localStorage.getItem('isLoggedIn');
+        if(isLogged !== 'true'){
+          showAuthOverlay();
+        } else {
+          hideAuthOverlay();
+        }
+      }catch(e){ showAuthOverlay(); }
+    }catch(e){ /* ignore if DOM not present */ }
+  })();
 })();

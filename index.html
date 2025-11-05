@@ -40,6 +40,7 @@
 
       <h3>⏸️ Játék vezérlés</h3>
       <button id="pause-btn">⏸ Megállít</button>
+      <button id="logout-btn" style="margin-top:8px;display:none;background:#b71c1c;border:1px solid rgba(0,0,0,0.2);">Kijelentkezés</button>
     </aside>
   </div>
 </main>
@@ -49,6 +50,32 @@
     </footer>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js"></script>
+  <!-- Authentication overlay (shown until user logs in) -->
+  <div id="auth-overlay" style="display:none;">
+    <div class="auth-modal">
+      <h2 id="auth-title">Belépés</h2>
+      <form id="login-form" class="auth-form">
+        <label for="login-username">Felhasználónév</label>
+        <input id="login-username" type="text" required placeholder="Felhasználónév">
+        <label for="login-pass">Jelszó</label>
+        <input id="login-pass" type="password" required placeholder="Jelszó">
+        <button id="login-btn" type="button">Belépés</button>
+        <p class="auth-switch">Nincs fiókod? <a href="#" id="show-register">Regisztrálj</a></p>
+      </form>
+
+      <form id="register-form" class="auth-form" style="display:none;">
+        <label for="reg-name">Felhasználónév (játékbeli név)</label>
+        <input id="reg-name" type="text" required placeholder="Pl. KovacsAnna">
+        <label for="reg-pass">Jelszó</label>
+        <input id="reg-pass" type="password" required placeholder="Jelszó">
+        <button id="reg-btn" type="button">Regisztráció</button>
+        <p class="auth-switch">Már van fiókod? <a href="#" id="show-login">Jelentkezz be</a></p>
+      </form>
+
+      <div id="auth-msg" class="auth-msg" aria-live="polite"></div>
+    </div>
+  </div>
+
   <script src="js/game.js"></script>
 </body>
 </html>
