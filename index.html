@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Frogger - Osztályos verzió</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+  <!-- The UI is now rendered on the canvas. Keep HTML minimal. -->
+
+  <div class="page">
+    <header class="site-header">
+      <h1>Osztályháború</h1>
+      <p class="tag">Játssz a barátaiddal — válassz karaktert és menj át az úton</p>
+    </header>
+
+    <main class="site-main">
+  <div class="game-card">
+    <canvas id="gameCanvas" width="1200" height="800"></canvas>
+
+    <!-- JOBB OLDALI PANEL -->
+    <aside class="game-info right-panel">
+      <h3>🎵 Zenelejátszó</h3>
+      <div id="music-player">
+        <img id="music-cover" src="assets/images/music1.jpg" alt="cover" class="cover">
+        <p id="music-title">Nincs zene</p>
+        <div class="music-controls">
+          <button id="prev-btn">⏮</button>
+          <button id="play-btn">▶️</button>
+          <button id="next-btn">⏭</button>
+           <button id="vol-down-btn">🔉</button>
+           <button id="vol-up-btn">🔊</button>
+        </div>
+          <div id="music-volume" style="margin-top:4px;font-size:14px;color:#333;text-align:center;">Hangerő: 80%</div>
+      </div>
+
+      <hr>
+
+      <h3>⏸️ Játék vezérlés</h3>
+      <button id="pause-btn">⏸ Megállít</button>
+    </aside>
+  </div>
+</main>
+
+    <footer class="site-footer">
+      <small>Fejlesztő: Ákos, Julió • Hátterek és karakterek: Ákos, Julió, Dörmi</small>
+    </footer>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>

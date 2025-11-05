@@ -1,0 +1,90 @@
+:root{
+  --bg:#222;
+  --panel:#111;
+  --accent:#4caf50;
+  --fg:#eee;
+}
+*{box-sizing:border-box;font-family:Segoe UI, Roboto, Arial, sans-serif}
+html,body{height:100%;margin:0;background:linear-gradient(#0b1220, #18202a);color:var(--fg)}
+/* UI is rendered inside canvas now. Keep stylesheet focused on canvas and global styles. */
+/* Page layout and canvas centering */
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f1724 0%, #132029 40%, #1b2b2f 100%);color:var(--fg)}
+.page{width:100%;max-width:1200px;padding:28px;box-sizing:border-box;margin:0 auto}
+.site-header{text-align:center;margin-bottom:18px}
+.site-header h1{margin:0;font-size:32px;letter-spacing:1px}
+.site-header .tag{margin:6px 0 0;color:rgba(255,255,255,0.8)}
+.game-card{display:flex;gap:18px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.05));padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(2,6,23,0.6);align-items:flex-start;justify-content:center}
+.game-card canvas{flex:1; max-width:80vw; height:80vh; display:block; border-radius:8px; background:#87ceeb; border:4px solid rgba(255,255,255,0.04)}
+.game-info{width:260px;color:#dfe8ea}
+.game-info h3{margin-top:0}
+.site-footer{text-align:center;margin-top:14px;color:rgba(255,255,255,0.6)}
+
+button{padding:10px 14px;border-radius:6px;border:2px solid rgba(255,255,255,0.06);background:var(--panel);color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--accent)}
+
+/* Responsive: on small screens stack the side panel under the canvas */
+@media (max-width: 900px){
+  .game-card{flex-direction:column;align-items:center}
+  .game-card canvas{max-width:100%;height:800px}
+  .game-info{width:100%;margin-top:12px}
+}
+canvas{display:block;margin:0 auto;border:4px solid rgba(255,255,255,0.06);border-radius:4px;background:#87ceeb}
+.hud{position:fixed;right:10px;top:10px;background:rgba(0,0,0,0.35);padding:8px;border-radius:6px}
+
+
+.right-panel {
+  position: absolute;
+  right: 10px;
+  top: 100px;
+  width: 200px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 2px solid #444;
+  border-radius: 12px;
+  padding: 12px;
+  color: white;
+  text-align: center;
+}
+
+.right-panel h3 {
+  font-size: 18px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #666;
+}
+
+.cover {
+  width: 100%;
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.music-controls button {
+  background: #222;
+  border: 1px solid #555;
+  border-radius: 6px;
+  color: #fff;
+  margin: 3px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: 0.2s;
+}
+
+.music-controls button:hover {
+  background: #4caf50;
+}
+
+#pause-btn {
+  margin-top: 10px;
+  width: 100%;
+  background: #222;
+  border: 1px solid #666;
+  color: #fff;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+#pause-btn:hover {
+  background: #f44336;
+}
