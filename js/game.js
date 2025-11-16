@@ -97,8 +97,13 @@
       try{ await initFirebaseIfNeeded(); const col = firebaseHelpers.collection(db, 'users'); await firebaseHelpers.addDoc(col, { uid: user.uid, name: username, email, created: Date.now() }); }catch(e){/* non-fatal */}
   localStorage.setItem('isLoggedIn','true');
   localStorage.setItem('playerName', username || email);
-  // Initialize and load player's progress doc
-  try{ await loadProgressForUser(user.uid); }catch(e){ console.warn('loadProgressForUser failed after register', e); }
+  // Initialize new player's progress (don't load from Firebase since it's a new account)
+  totalPoints = 0;
+  vBucks = 0;
+  unlockedMusic = [];
+  dlcCharacters.forEach(char => char.locked = true);
+  musicList = [...baseMusicList];
+  saveProgress();
       setAuthMessage('Regisztráció sikeres! Be vagy jelentkezve.', '#a6f3b1');
       hideAuthOverlay();
       drawMenu();
@@ -134,20 +139,20 @@
     // draw list with columns: rank | name | level | points
     ctx.font='18px monospace';
     ctx.fillStyle='#fff';
-    let y = 160;
+    let y = 200;
     if(!rows || rows.length===0){
       ctx.fillText('Nincsenek még eredmények.', W/2, y+30);
     } else {
       // header
       ctx.font='16px sans-serif';
-      ctx.fillText('Hely  Név                 Szint   Pontok', W/2-120, y-8);
+      ctx.fillText('Hely  Név                 Szint   Pontok', W/2-120, y-20);
       ctx.font='18px monospace';
       for(let i=0;i<rows.length;i++){
         const r = rows[i];
         const name = (r.name||'Anon').substring(0,18).padEnd(18,' ');
         const lvl = r.level || 0;
         const pts = r.points || 0;
-        ctx.fillText(`${(i+1).toString().padEnd(4,' ')} ${name}   ${lvl.toString().padEnd(6,' ')} ${pts}`, W/2-120, y + i*28);
+        ctx.fillText(`${(i+1).toString().padEnd(4,' ')} ${name}   ${lvl.toString().padEnd(6,' ')} ${pts}`, W/2-170, y + i*35);
       }
     }
 
@@ -300,7 +305,6 @@
     
     if(scene === 'menu') drawMenu();
     else if(scene === 'charSelect') drawCharSelect();
-    else if(scene === 'settings') drawSettings();
     else if(scene === 'credits') drawCredits();
   }
 
@@ -328,8 +332,19 @@ const baseMusicList = [
 const premiumMusicList = [
   { src: 'assets/sounds/mcisti66.mp3', title: 'MC Isti - A 66 OS ÚT !', cover: 'assets/images/mcisti.jpg', price: 5000 },
   { src: 'assets/sounds/HogyhaUgatnakaKutyák.mp3', title: 'Rostás Szabika 2016 Hogyha Ugatnak a Kutyák', cover: 'assets/images/zene.jpg', price: 7500 },
-  { src: 'assets/sounds/KlárinéniDala.mp3', title: 'Klári néni Dala', cover: 'assets/images/klari.jpg', price: 10000 }
+  { src: 'assets/sounds/KlárinéniDala.mp3', title: 'Klári néni Dala', cover: 'assets/images/klari.jpg', price: 10000 },
+  { src: 'assets/sounds/JustVidmanTudodHmmm(Tom Lucas Remix).mp3', title: 'JustVidman - Tudod... Hmmm... (Tom Lucas Remix)', cover: 'assets/images/tudod.jpg', price: 20000 }
 ];
+
+// Preload music cover images
+premiumMusicList.forEach(music => {
+  if (!music.img) {
+    music.img = new Image();
+    music.img.src = music.cover;
+    music.img.onload = () => { /* ready */ };
+    music.img.onerror = () => { /* fallback */ };
+  }
+});
 
 // Special DLC characters (need to be purchased with V-Bucks)
 const dlcCharacters = [
@@ -338,19 +353,19 @@ const dlcCharacters = [
   { imgSrc: 'assets/images/csomcsy.png', name: 'Kopasz SAS', price: 15, locked: true }
 ];
 
-// Local storage functions
-function saveProgress() {
-  const gameProgress = {
-    totalPoints: totalPoints,
-    vBucks: vBucks,
-    unlockedMusic: unlockedMusic,
-    dlcCharacters: dlcCharacters
-  };
-  // keep a local copy for offline fallback
-  try{ localStorage.setItem('gameProgress', JSON.stringify(gameProgress)); }catch(e){}
-  // also persist to Firestore for the logged-in user (fire-and-forget)
-  try{ saveProgressToFirestore(); }catch(e){ /* non-fatal */ }
-}
+  // Local storage functions
+  function saveProgress() {
+    const gameProgress = {
+      totalPoints: totalPoints,
+      vBucks: vBucks,
+      unlockedMusic: unlockedMusic,
+      dlcCharacters: dlcCharacters
+    };
+    // keep a local copy for offline fallback
+    try{ localStorage.setItem('gameProgress', JSON.stringify(gameProgress)); }catch(e){}
+    // also persist to Firestore for the logged-in user (fire-and-forget)
+    try{ saveProgressToFirestore(); }catch(e){ /* non-fatal */ }
+  }
 
 // Firestore-backed save (per-account)
 async function saveProgressToFirestore(){
@@ -415,11 +430,13 @@ function loadProgress() {
   }
 }
 
-// Player progress
-let totalPoints = 0;
-let vBucks = 0;
-let unlockedMusic = [];
-let musicList = [...baseMusicList];
+  // Player progress
+  let totalPoints = 0;
+  let vBucks = 0;
+  let unlockedMusic = [];
+  let musicList = [...baseMusicList];
+
+
 
 // Load saved progress when game starts
 loadProgress();
@@ -501,46 +518,61 @@ pauseBtn.addEventListener('click', () => {
   }
 });
 
-// módosítjuk a loopot, hogy ne fusson pause alatt
-function loop(ts) {
-  if (paused) {
-    requestAnimationFrame(loop);
-    return;
+  // General draw function for all scenes
+  function draw() {
+    if(scene === 'menu') drawMenu();
+    else if(scene === 'charSelect') drawCharSelect();
+    else if(scene === 'playing') drawGame();
+    else if(scene === 'credits') drawCredits();
+    else if(scene === 'shop') drawShop();
+    else if(scene === 'updates') drawUpdates();
+    else if(scene === 'leaderboard') drawLeaderboard();
   }
-  
-  const dt = (ts-lastTime)/1000; 
-  lastTime = ts; 
-  if(scene!=='playing') return; 
-  
-  player.update(dt,input); 
-  for(const n of npcs) n.update(dt); 
-  
-  for(const n of npcs){ 
-    if(collide(player.rect(), n.rect())){ 
-      if(catchSound){ 
-        catchSound.volume=AUDIO_VOL; 
-        catchSound.play().catch(()=>{}); 
-      } 
-      totalPoints += Math.floor(score/2); // Add half the score as points when game ends
-      saveProgress();
-      endRound(false); 
-      return; 
-    } 
-  } 
-  
-  if(player.y <= 10){ 
-    score += 1000; 
-    totalPoints += 1000; // Add points for completing a level
-    vBucks += 1; // Add 1 V-Buck per level completed
-    level += 1; 
-    spawnNpcsForLevel(level, player.idx); 
-    player.x = W/2; 
-    player.y = H-60; 
-  } 
-  
-  drawGame(); 
-  requestAnimationFrame(loop); 
-}
+
+  // módosítjuk a loopot, hogy ne fusson pause alatt
+  function loop(ts) {
+    if (paused) {
+      requestAnimationFrame(loop);
+      return;
+    }
+
+    const dt = (ts-lastTime)/1000;
+    lastTime = ts;
+
+    if(scene === 'playing') {
+      player.update(dt,input);
+      for(const n of npcs) n.update(dt);
+
+      for(const n of npcs){
+        if(collide(player.rect(), n.rect())){
+          if(catchSound){
+            catchSound.volume=AUDIO_VOL;
+            catchSound.play().catch(()=>{});
+          }
+          totalPoints += Math.floor(score/2); // Add half the score as points when game ends
+          saveProgress();
+          endRound(false);
+          return;
+        }
+      }
+
+      if(player.y <= 10){
+        score += 1000;
+        totalPoints += 1000; // Add points for completing a level
+        vBucks += 1; // Add 1 V-Buck per level completed
+        level += 1;
+        spawnNpcsForLevel(level, player.idx);
+        player.x = W/2;
+        player.y = H-60;
+      }
+
+      drawGame();
+    } else {
+      draw();
+    }
+
+    requestAnimationFrame(loop);
+  }
 
   // Define characters as an array of objects with imgSrc and name properties
   const characters = [
@@ -604,8 +636,8 @@ function loop(ts) {
 
 
   class Player{ constructor(x,y,idx){ this.x=x; this.y=y; this.w=60; this.h=60; this.speed=200; this.idx=idx; this.img=null; this.loadImg(); }
-    loadImg(){ 
-      const i = new Image(); 
+    loadImg(){
+      const i = new Image();
       // Check if it's a DLC character
       if(this.idx >= characters.length) {
         const dlcIndex = this.idx - characters.length;
@@ -615,8 +647,8 @@ function loop(ts) {
       } else {
         i.src = characters[this.idx].imgSrc;
       }
-      i.onload=()=>this.img=i; 
-      i.onerror=()=>{} 
+      i.onload=()=>this.img=i;
+      i.onerror=()=>{};
     }
     update(dt,input){ const move=this.speed*dt; if(input.left) this.x-=move; if(input.right) this.x+=move; if(input.up) this.y-=move; if(input.down) this.y+=move; this.x=Math.max(0,Math.min(W-this.w,this.x)); this.y=Math.max(0,Math.min(H-this.h,this.y)); }
     draw(ctx){ if(this.img && this.img.complete) ctx.drawImage(this.img,this.x,this.y,this.w,this.h); else { ctx.fillStyle='#0a0'; ctx.fillRect(this.x,this.y,this.w,this.h); ctx.fillStyle='#fff'; ctx.fillText('TE',this.x+8,this.y+22); } }
@@ -651,11 +683,12 @@ function loop(ts) {
     ctx.fillStyle='#111'; ctx.globalAlpha=0.7; ctx.fillRect(60,80,W-120,H-160); ctx.globalAlpha=1;
     ctx.fillStyle='#fff'; ctx.font='36px sans-serif'; ctx.textAlign='center'; ctx.fillText('Át kell jutnod az úton!', W/2, 140);
 
-    const btns = [ 
-      {text:'Start', x:W/2-80, y:200, w:160, h:48, action:'start'}, 
+    const btns = [
+      {text:'Start', x:W/2-80, y:200, w:160, h:48, action:'start'},
       {text:'Leaderboard', x:W/2-80, y:260, w:160, h:48, action:'leaderboard'},
-      {text:'Shop', x:W/2-80, y:320, w:160, h:48, action:'shop'}, 
-      {text:'Credits', x:W/2-80, y:380, w:160, h:48, action:'credits'} 
+      {text:'Shop', x:W/2-80, y:320, w:160, h:48, action:'shop'},
+      {text:'Updates', x:W/2-80, y:380, w:160, h:48, action:'updates'},
+      {text:'Credits', x:W/2-80, y:440, w:160, h:48, action:'credits'}
     ];
     uiButtons.length = 0;
     for(const b of btns){ 
@@ -678,141 +711,323 @@ function loop(ts) {
 
   function drawShop() {
     ctx.clearRect(0,0,W,H);
-    ctx.fillStyle='#7ec0ee';
+    // Fortnite-style background gradient
+    const gradient = ctx.createLinearGradient(0, 0, 0, H);
+    gradient.addColorStop(0, '#1a1a2e');
+    gradient.addColorStop(0.5, '#16213e');
+    gradient.addColorStop(1, '#0f3460');
+    ctx.fillStyle = gradient;
     ctx.fillRect(0,0,W,H);
-    ctx.fillStyle='#111';
-    ctx.globalAlpha=0.75;
-    ctx.fillRect(60,80,W-120,H-160);
-    ctx.globalAlpha=1;
-    
-    // Shop title and currency display
-    ctx.fillStyle='#fff';
-    ctx.font='28px sans-serif';
-    ctx.textAlign='center';
-    ctx.fillText('Shop', W/2, 130);
-    ctx.font='20px sans-serif';
-    ctx.fillText(`🪙 ${totalPoints} pont    💎 ${vBucks} V-Buck`, W/2, 170);
 
-    // Premium Music section
-    ctx.font='22px sans-serif';
-    ctx.fillText('Premium Zenék', W/2, 220);
-    
+    // Shop title
+    ctx.fillStyle='#fff';
+    ctx.font='36px sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText('Item Shop', W/2, 60);
+
+    // Currency display
+    ctx.font='20px sans-serif';
+    ctx.fillText(`🪙 ${totalPoints} pont    💎 ${vBucks} V-Buck`, W/2, 100);
+
     uiButtons.length = 0;
-    let y = 250;
-    for(const music of premiumMusicList) {
-      if(!unlockedMusic.includes(music.src)) {
+
+    // Music section
+    ctx.fillStyle='#fff';
+    ctx.font='24px sans-serif';
+    ctx.fillText('Zenék', W/2, 140);
+
+    const musicItems = premiumMusicList.map(m => ({...m, type: 'music', currency: '🪙', currencyType: 'points', purchased: unlockedMusic.includes(m.src)}));
+
+    const cardWidth = 180;
+    const cardHeight = 220;
+    const cardsPerRow = Math.floor((W - 100) / (cardWidth + 20));
+    const startX = (W - (cardsPerRow * (cardWidth + 20) - 20)) / 2;
+    let x = startX;
+    let y = 160;
+
+    // Draw music cards
+    for(let i = 0; i < musicItems.length; i++) {
+      const item = musicItems[i];
+
+      // Card background
+      ctx.fillStyle = '#2a2a3e';
+      ctx.fillRect(x, y, cardWidth, cardHeight);
+      ctx.strokeStyle = '#4a4a6a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, cardWidth, cardHeight);
+
+      // Item image (placeholder or actual image)
+      ctx.fillStyle = '#444';
+      ctx.fillRect(x + 10, y + 10, cardWidth - 20, 120);
+
+      // Try to draw actual image if available
+      let img = null;
+      if(item.type === 'music') {
+        // For music, create and load image if not already loaded
+        if(!item.img) {
+          item.img = new Image();
+          item.img.src = item.cover;
+          item.img.onload = () => { /* will be drawn next frame */ };
+          item.img.onerror = () => { /* fallback to emoji */ };
+        }
+        img = item.img;
+      }
+
+      if(img && img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, x + 10, y + 10, cardWidth - 20, 120);
+      } else {
+        // Placeholder emoji
+        ctx.fillStyle = '#fff';
+        ctx.font = '48px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🎵', x + cardWidth/2, y + 75);
+      }
+
+      // Item name (with text wrapping for long titles)
+      ctx.fillStyle = '#fff';
+      ctx.font = '14px sans-serif';
+      const maxWidth = cardWidth - 20;
+      const words = item.title.split(' ');
+      let line = '';
+      let yPos = y + 145;
+
+      for (let i = 0; i < words.length; i++) {
+        const testLine = line + words[i] + ' ';
+        const metrics = ctx.measureText(testLine);
+        if (metrics.width > maxWidth && i > 0) {
+          ctx.fillText(line, x + cardWidth/2, yPos);
+          line = words[i] + ' ';
+          yPos += 16;
+        } else {
+          line = testLine;
+        }
+      }
+      ctx.fillText(line, x + cardWidth/2, yPos);
+
+      // Price or purchased status
+      if(item.purchased) {
+        ctx.fillStyle = '#00ff88';
+        ctx.font = '16px sans-serif';
+        ctx.fillText('Megvásárolva', x + cardWidth/2, y + 190);
+      } else {
+        const canAfford = totalPoints >= item.price;
+        ctx.fillStyle = canAfford ? '#00ff88' : '#ff4444';
+        ctx.font = '18px sans-serif';
+        ctx.fillText(`${item.currency} ${item.price}`, x + cardWidth/2, y + 180);
+      }
+
+      // Buy button or purchased indicator
+      const btnY = y + 195;
+      if(item.purchased) {
+        ctx.fillStyle = '#666';
+        ctx.fillRect(x + 20, btnY, cardWidth - 40, 25);
+        ctx.strokeStyle = '#888';
+        ctx.strokeRect(x + 20, btnY, cardWidth - 40, 25);
+        ctx.fillStyle = '#fff';
+        ctx.font = '14px sans-serif';
+        ctx.fillText('Megvásárolva', x + cardWidth/2, btnY + 18);
+      } else {
         const btn = {
-          text: `${music.title} - ${music.price} 🪙`,
-          x: W/2-140,
-          y: y,
-          w: 280,
-          h: 40,
+          text: 'Vásárlás',
+          x: x + 20,
+          y: btnY,
+          w: cardWidth - 40,
+          h: 25,
           action: 'buyMusic',
-          item: music
+          item: item
         };
-        ctx.fillStyle = totalPoints >= music.price ? '#2a6' : '#666';
+
+        const canAfford = totalPoints >= item.price;
+        ctx.fillStyle = canAfford ? '#4CAF50' : '#666';
         ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
-        ctx.strokeStyle='#888';
+        ctx.strokeStyle = '#888';
         ctx.strokeRect(btn.x, btn.y, btn.w, btn.h);
-        ctx.fillStyle='#fff';
-        ctx.fillText(btn.text, btn.x + btn.w/2, btn.y + 28);
+        ctx.fillStyle = '#fff';
+        ctx.font = '14px sans-serif';
+        ctx.fillText(btn.text, btn.x + btn.w/2, btn.y + 18);
         uiButtons.push(btn);
-        y += 50;
+      }
+
+      x += cardWidth + 20;
+      if((i + 1) % cardsPerRow === 0) {
+        x = startX;
+        y += cardHeight + 20;
       }
     }
 
-    // DLC Characters section
-    y += 20;
+    // Characters section
+    y += cardHeight + 40;
     ctx.fillStyle='#fff';
-    ctx.font='22px sans-serif';
-    ctx.fillText('Special Karakterek', W/2, y);
-    y += 30;
+    ctx.font='24px sans-serif';
+    ctx.fillText('Karakterek', W/2, y);
 
-    for(const char of dlcCharacters) {
-      if(char.locked) {
+    const characterItems = dlcCharacters.map(c => ({...c, type: 'character', currency: '💎', currencyType: 'vBucks', purchased: !c.locked}));
+
+    y += 20;
+    x = startX;
+
+    // Draw character cards
+    for(let i = 0; i < characterItems.length; i++) {
+      const item = characterItems[i];
+
+      // Card background
+      ctx.fillStyle = '#2a2a3e';
+      ctx.fillRect(x, y, cardWidth, cardHeight);
+      ctx.strokeStyle = '#4a4a6a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, cardWidth, cardHeight);
+
+      // Item image (placeholder or actual image)
+      ctx.fillStyle = '#444';
+      ctx.fillRect(x + 10, y + 10, cardWidth - 20, 120);
+
+      // Try to draw actual image if available
+      let img = null;
+      if(item.type === 'character') {
+        // For characters, use existing charImgs array
+        const dlcIndex = dlcCharacters.findIndex(c => c.name === item.name);
+        if(dlcIndex >= 0 && charImgs && charImgs[characters.length + dlcIndex]) {
+          img = charImgs[characters.length + dlcIndex];
+        }
+      }
+
+      if(img && img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, x + 10, y + 10, cardWidth - 20, 120);
+      } else {
+        // Placeholder emoji
+        ctx.fillStyle = '#fff';
+        ctx.font = '48px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('👤', x + cardWidth/2, y + 75);
+      }
+
+      // Item name
+      ctx.fillStyle = '#fff';
+      ctx.font = '16px sans-serif';
+      ctx.fillText(item.name, x + cardWidth/2, y + 150);
+
+      // Price or purchased status
+      if(item.purchased) {
+        ctx.fillStyle = '#00ff88';
+        ctx.font = '18px sans-serif';
+        ctx.fillText('Megvásárolva', x + cardWidth/2, y + 180);
+      } else {
+        const canAfford = vBucks >= item.price;
+        ctx.fillStyle = canAfford ? '#00ff88' : '#ff4444';
+        ctx.font = '18px sans-serif';
+        ctx.fillText(`${item.currency} ${item.price}`, x + cardWidth/2, y + 180);
+      }
+
+      // Buy button or purchased indicator
+      const btnY = y + 185;
+      if(item.purchased) {
+        ctx.fillStyle = '#666';
+        ctx.fillRect(x + 20, btnY, cardWidth - 40, 25);
+        ctx.strokeStyle = '#888';
+        ctx.strokeRect(x + 20, btnY, cardWidth - 40, 25);
+        ctx.fillStyle = '#fff';
+        ctx.font = '14px sans-serif';
+        ctx.fillText('Megvásárolva', x + cardWidth/2, btnY + 18);
+      } else {
         const btn = {
-          text: `${char.name} - ${char.price} 💎`,
-          x: W/2-140,
-          y: y,
-          w: 280,
-          h: 40,
+          text: 'Vásárlás',
+          x: x + 20,
+          y: btnY,
+          w: cardWidth - 40,
+          h: 25,
           action: 'buyCharacter',
-          item: char
+          item: item
         };
-        ctx.fillStyle = vBucks >= char.price ? '#2a6' : '#666';
+
+        const canAfford = vBucks >= item.price;
+        ctx.fillStyle = canAfford ? '#4CAF50' : '#666';
         ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
-        ctx.strokeStyle='#888';
+        ctx.strokeStyle = '#888';
         ctx.strokeRect(btn.x, btn.y, btn.w, btn.h);
-        ctx.fillStyle='#fff';
-        ctx.fillText(btn.text, btn.x + btn.w/2, btn.y + 28);
+        ctx.fillStyle = '#fff';
+        ctx.font = '14px sans-serif';
+        ctx.fillText(btn.text, btn.x + btn.w/2, btn.y + 18);
         uiButtons.push(btn);
-        y += 50;
+      }
+
+      x += cardWidth + 20;
+      if((i + 1) % cardsPerRow === 0) {
+        x = startX;
+        y += cardHeight + 20;
       }
     }
 
     // Back button
-    const b = {
+    const backBtn = {
       text:'Vissza',
-      x:W/2-60,
-      y:H-100,
-      w:120,
-      h:40,
+      x: 20,
+      y: H - 60,
+      w: 100,
+      h: 40,
       action:'back'
     };
     ctx.fillStyle='#444';
-    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillRect(backBtn.x, backBtn.y, backBtn.w, backBtn.h);
     ctx.strokeStyle='#888';
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.strokeRect(backBtn.x, backBtn.y, backBtn.w, backBtn.h);
     ctx.fillStyle='#fff';
-    ctx.font='18px sans-serif';
-    ctx.fillText(b.text, b.x + b.w/2, b.y + 28);
-    uiButtons.push(b);
+    ctx.font='16px sans-serif';
+    ctx.fillText(backBtn.text, backBtn.x + backBtn.w/2, backBtn.y + 26);
+    uiButtons.push(backBtn);
+
+    ctx.textAlign='start';
   }
 
-  function drawCredits() { 
+  function drawUpdates() {
     // Clear and draw background
-    ctx.clearRect(0,0,W,H); 
-    ctx.fillStyle='#7ec0ee'; 
-    ctx.fillRect(0,0,W,H); 
-    
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#7ec0ee';
+    ctx.fillRect(0,0,W,H);
+
     // Draw semi-transparent overlay
-    ctx.fillStyle='#111'; 
-    ctx.globalAlpha=0.75; 
-    ctx.fillRect(40,60,W-80,H-120); 
+    ctx.fillStyle='#111';
+    ctx.globalAlpha=0.75;
+    ctx.fillRect(40,60,W-80,H-120);
     ctx.globalAlpha=1;
-    
+
     // Title
     ctx.fillStyle='#fff';
     ctx.font='28px sans-serif';
     ctx.textAlign='center';
-    ctx.fillText('Készítők', W/2, 100);
-    
-    // Development credits
-    ctx.font='20px sans-serif';
-    ctx.fillStyle='#ffd700'; // Arany színű főcím
-    ctx.fillText('Fejlesztői Csapat', W/2, 150);
-    
-    ctx.font='16px sans-serif';
-    ctx.fillStyle='#fff';
-    ctx.fillText('Julio és Ákos', W/2, 180);
-    ctx.fillText('Grafikai Tervezés: Az Osztály Művészei', W/2, 210);
-    ctx.fillText('Játékmenet Tervezés: Julio és Ákos', W/2, 240);
-    
-    // Special thanks
+    ctx.fillText('Frissítések', W/2, 100);
+
+    // Update content
+    ctx.font='18px sans-serif';
     ctx.fillStyle='#ffd700';
-    ctx.font='20px sans-serif';
-    ctx.fillText('Külön Köszönet', W/2, 290);
-    
-    ctx.fillStyle='#fff';
+    ctx.fillText('Legújabb fejlesztések:', W/2, 150);
+
     ctx.font='16px sans-serif';
-    ctx.fillText('A tesztelésben résztvevő diákoknak', W/2, 350);
-    ctx.fillText('Tanárainknak a támogatásért és hogy ilyen jó képek születtek róluk <3', W/2, 380);
-    
+    ctx.fillStyle='#fff';
+    let y = 180;
+    const updates = [
+      '• Megállító gomb hozzáadása játék közben',
+      '• Ctrl+görgő zoom megakadályozása csalás ellen',
+      '• fix pozicionálása minden monitoron',
+      '• "Special Karakterek" szöveg animált szivárvány effekt',
+      '• Kijelentkezéskor Firebase-ből törlődik a játékos előrehaladása(akinek volt fiókja annak mentésre kerül az elért eredménye),',
+      '• Új felhasználók tiszta játékállapottal indulnak',
+      '• Shop hozzáadása prémium zenékkel és karakterekkel',
+      '• Zenei borítók előtöltése a shopban',
+      '• Hosszú zenei címek szöveg tördelése',
+      '• Vásárolt elemek egyértelmű jelzése a shopban',
+      '• Karakter vásárlás javítása - azonnali feloldás'
+    ];
+
+    for(const update of updates) {
+      ctx.fillText(update, W/2, y);
+      y += 25;
+    }
+
     // Version info
     ctx.font='14px sans-serif';
     ctx.fillStyle='#aaa';
-    ctx.fillText('Verzió: 1.0.0 - 2025', W/2, H-100);
-    
+    ctx.fillText('Verzió: 1.0.1 - 2025', W/2, H-100);
+
     // Back button
     const backBtn = {text:'Vissza', x:W/2-60, y:H-80, w:120, h:40, action:'back'};
     ctx.fillStyle='#444';
@@ -820,80 +1035,147 @@ function loop(ts) {
     ctx.fillStyle='#fff';
     ctx.font='16px sans-serif';
     ctx.fillText('Vissza', W/2, backBtn.y + 25);
-    
+
     // Store button for click handling
     uiButtons.length = 0;
     uiButtons.push(backBtn);
-    
+
     // Reset text align for consistency
     ctx.textAlign='start';
   }
 
+
+
+  function drawCredits() {
+    // Clear and draw background
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#7ec0ee';
+    ctx.fillRect(0,0,W,H);
+
+    // Draw semi-transparent overlay
+    ctx.fillStyle='#111';
+    ctx.globalAlpha=0.75;
+    ctx.fillRect(40,60,W-80,H-120);
+    ctx.globalAlpha=1;
+
+    // Title
+    ctx.fillStyle='#fff';
+    ctx.font='28px sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText('Készítők', W/2, 100);
+
+    // Development credits
+    ctx.font='20px sans-serif';
+    ctx.fillStyle='#ffd700'; // Arany színű főcím
+    ctx.fillText('Fejlesztői Csapat', W/2, 150);
+
+    ctx.font='16px sans-serif';
+    ctx.fillStyle='#fff';
+    ctx.fillText('Julio és Ákos', W/2, 180);
+    ctx.fillText('Grafikai Tervezés: Az Osztály Művészei', W/2, 210);
+    ctx.fillText('Játékmenet Tervezés: Julio és Ákos', W/2, 240);
+
+    // Special thanks
+    ctx.fillStyle='#ffd700';
+    ctx.font='20px sans-serif';
+    ctx.fillText('Külön Köszönet', W/2, 290);
+
+    ctx.fillStyle='#fff';
+    ctx.font='16px sans-serif';
+    ctx.fillText('A tesztelésben résztvevő diákoknak', W/2, 350);
+    ctx.fillText('Tanárainknak a támogatásért és hogy ilyen jó képek születtek róluk <3', W/2, 380);
+
+    // Version info
+    ctx.font='14px sans-serif';
+    ctx.fillStyle='#aaa';
+    ctx.fillText('Verzió: 1.0.1 - 2025', W/2, H-100);
+
+    // Back button
+    const backBtn = {text:'Vissza', x:W/2-60, y:H-80, w:120, h:40, action:'back'};
+    ctx.fillStyle='#444';
+    ctx.fillRect(backBtn.x, backBtn.y, backBtn.w, backBtn.h);
+    ctx.fillStyle='#fff';
+    ctx.font='16px sans-serif';
+    ctx.fillText('Vissza', W/2, backBtn.y + 25);
+
+    // Store button for click handling
+    uiButtons.length = 0;
+    uiButtons.push(backBtn);
+
+    // Reset text align for consistency
+    ctx.textAlign='start';
+  }
+
+
+
   // Draw character selection grid using images when available
-  function drawCharSelect(){ 
-    ctx.clearRect(0,0,W,H); 
-    ctx.fillStyle='#7ec0ee'; 
-    ctx.fillRect(0,0,W,H); 
-    ctx.fillStyle='#111'; 
-    ctx.globalAlpha=0.75; 
-    ctx.fillRect(30,40,W-60,H-80); 
-    ctx.globalAlpha=1; 
-    ctx.fillStyle='#fff'; 
-    ctx.font='22px sans-serif'; 
-    ctx.textAlign='center'; 
+  function drawCharSelect(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#7ec0ee';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#111';
+    ctx.globalAlpha=0.75;
+    ctx.fillRect(30,40,W-60,H-80);
+    ctx.globalAlpha=1;
+    ctx.fillStyle='#fff';
+    ctx.font='22px sans-serif';
+    ctx.textAlign='center';
     ctx.fillText('Válassz karaktert', W/2,78);
 
     // Show currency
     ctx.font='18px sans-serif';
     ctx.fillText(`🪙 ${totalPoints} pont    💎 ${vBucks} V-Buck`, W/2, 100);
-  
-    const cols = 7; 
-    const padding=25; 
-    const thumbSize=100; 
-    const startX = (W - (cols*thumbSize + (cols-1)*padding))/2; 
+
+
+
+    // Fixed grid layout for consistent appearance across monitors
+    const cols = 7;
+    const padding = 25;
+    const thumbSize = 100;
+    const startX = (W - (cols * thumbSize + (cols - 1) * padding)) / 2;
     const startY = 130;
-    
+
     uiButtons.length = 0;
-    
+
     // Draw regular characters
-    let x = startX, y = startY; 
+    let x = startX, y = startY;
     for(let i=0; i<characters.length; i++){
-      const col = (i)%cols; 
+      const col = (i)%cols;
       const row = Math.floor((i)/cols);
-      x = startX + col*(thumbSize+padding); 
+      x = startX + col*(thumbSize+padding);
       y = startY + row*(thumbSize+padding);
-      
+
       // draw slot
-      ctx.fillStyle='#222'; 
+      ctx.fillStyle='#222';
       ctx.fillRect(x,y,thumbSize,thumbSize);
-      ctx.strokeStyle='#666'; 
+      ctx.strokeStyle='#666';
       ctx.strokeRect(x,y,thumbSize,thumbSize);
-      
+
       // draw image if loaded
-      const img = charImgs[i]; 
-      if(img && img.complete){ 
+      const img = charImgs[i];
+      if(img && img.complete){
         ctx.drawImage(img, x, y, thumbSize, thumbSize);
       } else {
-        ctx.fillStyle='#888'; 
-        ctx.font='14px sans-serif'; 
+        ctx.fillStyle='#888';
+        ctx.font='14px sans-serif';
         ctx.fillText(characters[i].name, x+8, y+44);
       }
-      
+
       // draw name
       const name = characters[i].name;
-      ctx.fillStyle='#fff'; 
-      ctx.font='14px sans-serif'; 
+      ctx.fillStyle='#fff';
+      ctx.font='14px sans-serif';
       ctx.textAlign='center';
       const nameX = x + thumbSize/2;
       const nameY = y + thumbSize + 20;
       ctx.fillText(name, nameX, nameY);
-      
+
       uiButtons.push({
-        action:'pick', 
-        index:i, 
-        x:x, 
-        y:y, 
-        w:thumbSize, 
+        action:'pick',
+        index:i,
+        x:x,
+        y:y,
+        w:thumbSize,
         h:thumbSize + 24,
         locked: false
       });
@@ -902,19 +1184,29 @@ function loop(ts) {
     // Draw DLC characters at the bottom with lock icon if locked
     y += thumbSize + padding * 2;
     ctx.font='20px sans-serif';
-    ctx.fillStyle='#fff';
-    ctx.fillText('Special Karakterek', W/2, y);
+
+    // Animated rainbow effect for "Special Karakterek"
+    const text = 'Special Karakterek';
+    const time = Date.now() * 0.02; // Faster animation speed for smooth flow
+    let xPos = W/2 - ctx.measureText(text).width / 2;
+    for (let i = 0; i < text.length; i++) {
+      const hue = (time + i * 15) % 360; // Closer color spacing for smoother flow
+      ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+      ctx.fillText(text[i], xPos, y);
+      xPos += ctx.measureText(text[i]).width;
+    }
+
     y += padding;
 
     for(let i=0; i<dlcCharacters.length; i++) {
       const char = dlcCharacters[i];
       x = startX + i*(thumbSize+padding);
-      
+
       ctx.fillStyle='#333';
       ctx.fillRect(x, y, thumbSize, thumbSize);
       ctx.strokeStyle = char.locked ? '#f00' : '#0f0';
       ctx.strokeRect(x, y, thumbSize, thumbSize);
-      
+
       if(char.locked) {
         ctx.fillStyle='#fff';
         ctx.font='32px sans-serif';
@@ -930,11 +1222,11 @@ function loop(ts) {
           ctx.fillText(char.name, x+8, y+44);
         }
       }
-      
+
       ctx.fillStyle='#fff';
       ctx.font='14px sans-serif';
       ctx.fillText(char.name, x + thumbSize/2, y + thumbSize + 20);
-      
+
       if(!char.locked) {
         uiButtons.push({
           action:'pick',
@@ -947,7 +1239,7 @@ function loop(ts) {
         });
       }
     }
-    
+
     // Add back button at the bottom
     ctx.textAlign='center';
     const backBtn = {
@@ -966,7 +1258,7 @@ function loop(ts) {
     ctx.font='18px sans-serif';
     ctx.fillText(backBtn.text, backBtn.x + backBtn.w/2, backBtn.y + 26);
     uiButtons.push(backBtn);
-    
+
     ctx.textAlign='start';
   }
 
@@ -984,17 +1276,7 @@ function loop(ts) {
       } 
     }
     
-    // additional handling for slider area in settings
-    if(scene==='settings'){ 
-      // if clicked inside slider area, set AUDIO_VOL
-      const sx = W/2-140, sw=280, sy=180, sh=8; 
-      if(mx>=sx && mx<=sx+sw && my>=sy-6 && my<=sy+16){ 
-        AUDIO_VOL = Math.max(0, Math.min(1, (mx-sx)/sw)); 
-        if(catchSound) catchSound.volume=AUDIO_VOL;
-        if(audio) audio.volume=AUDIO_VOL;
-        drawSettings(); 
-      } 
-    }
+
   });
 
   function handleUIButton(b, mx, my){ 
@@ -1016,6 +1298,9 @@ function loop(ts) {
       } else if(b.action==='shop'){
         scene='shop';
         drawShop();
+      } else if(b.action==='updates'){
+        scene='updates';
+        drawUpdates();
       } else if(b.action==='credits'){
         scene='credits';
         drawCredits();
@@ -1045,28 +1330,45 @@ function loop(ts) {
         const char = b.item;
         if(vBucks >= char.price) {
           vBucks -= char.price;
-          char.locked = false;
+          // Find and unlock the original character in dlcCharacters array
+          const dlcIndex = dlcCharacters.findIndex(c => c.name === char.name);
+          if(dlcIndex >= 0) {
+            dlcCharacters[dlcIndex].locked = false;
+          }
           saveProgress();
           startPurchaseAnimation(char.name);
           drawShop();
         }
       }
     }
-    else if(scene==='credits'){ 
-      if(b.action==='back'){ 
-        scene='menu'; 
-        drawMenu(); 
-      } 
+    else if(scene==='updates'){
+      if(b.action==='back'){
+        scene='menu';
+        drawMenu();
+      }
     }
-    else if(scene==='charSelect'){ 
-      if(b.action==='pick' && !b.locked){ 
-        startGame(b.index); 
+    else if(scene==='credits'){
+      if(b.action==='back'){
+        scene='menu';
+        drawMenu();
+      }
+    }
+    else if(scene==='charSelect'){
+      if(b.action==='pick' && !b.locked){
+        startGame(b.index);
       } else if(b.action==='back'){
         scene='menu';
         drawMenu();
       }
     }
   }
+
+  // Prevent scrolling with Ctrl+wheel
+  window.addEventListener('wheel', e => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+    }
+  }, { passive: false });
 
   // Keyboard input - always update flags on key events, but we'll reset them on scene changes
   window.addEventListener('keydown', e=>{
@@ -1147,26 +1449,30 @@ function loop(ts) {
     };
   }
   // main loop when playing (boss and projectiles removed)
-  function loop(ts){ 
-    const dt = (ts-lastTime)/1000; 
-    lastTime = ts; 
-    if(scene!=='playing') return; 
-    
-    player.update(dt,input); 
-    for(const n of npcs) n.update(dt); 
-    
-    for(const n of npcs){ 
-      if(collide(player.rect(), n.rect())){ 
-        if(catchSound){ 
-          catchSound.volume=AUDIO_VOL; 
-          catchSound.play().catch(()=>{}); 
-        } 
+  function loop(ts){
+    if (paused) {
+      return;
+    }
+
+    const dt = (ts-lastTime)/1000;
+    lastTime = ts;
+    if(scene!=='playing') return;
+
+    player.update(dt,input);
+    for(const n of npcs) n.update(dt);
+
+    for(const n of npcs){
+      if(collide(player.rect(), n.rect())){
+        if(catchSound){
+          catchSound.volume=AUDIO_VOL;
+          catchSound.play().catch(()=>{});
+        }
         totalPoints += Math.floor(score/2); // Add half the score as points when game ends
-        endRound(false); 
-        return; 
-      } 
-    } 
-    
+        endRound(false);
+        return;
+      }
+    }
+
     // Check for V-Buck collection
     if(vbuck && !vbuck.collected) {
       if(collide(player.rect(), vbuck)) {
@@ -1177,14 +1483,14 @@ function loop(ts) {
     }
 
     // Level complete
-    if(player.y <= 60){ 
-      score += 1000; 
+    if(player.y <= 60){
+      score += 1000;
       totalPoints += 1000; // Add points for completing a level
       saveProgress();
-      level += 1; 
-      spawnNpcsForLevel(level, player.idx); 
-      player.x = W/2; 
-      player.y = H-80; 
+      level += 1;
+      spawnNpcsForLevel(level, player.idx);
+      player.x = W/2;
+      player.y = H-80;
       // Show level completion message
       ctx.fillStyle = 'rgba(0,0,0,0.7)';
       ctx.fillRect(W/2-150, H/2-40, 300, 80);
@@ -1192,10 +1498,10 @@ function loop(ts) {
       ctx.font = '24px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(`${level-1}. szint teljesítve!`, W/2, H/2);
-    } 
-    
-    drawGame(); 
-    requestAnimationFrame(loop); 
+    }
+
+    drawGame();
+    requestAnimationFrame(loop);
   }
   async function endRound(success){
     // submit final score to leaderboard if player is known
@@ -1322,9 +1628,25 @@ function loop(ts) {
         try{ logoutBtn.style.display = (localStorage.getItem('isLoggedIn') === 'true') ? 'block' : 'none'; }catch(e){}
         logoutBtn.addEventListener('click', async ()=>{
           try{
+            // Get current user before signing out
+            const currentUser = auth ? auth.currentUser : null;
             if(auth){ const { signOut } = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js'); await signOut(auth); }
+
+            // Clear user's progress from Firebase after logout
+            if(currentUser && db){
+              const { deleteDoc, doc } = await import('https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js');
+              try{
+                await deleteDoc(doc(db, 'progress', currentUser.uid));
+                console.log('User progress cleared from Firebase');
+              }catch(e){
+                console.warn('Failed to clear progress from Firebase:', e);
+              }
+            }
           }catch(e){ console.warn('SignOut failed', e); }
-          try{ localStorage.removeItem('isLoggedIn'); localStorage.removeItem('playerName'); }catch(e){}
+          try{
+            localStorage.removeItem('isLoggedIn');
+            localStorage.removeItem('playerName');
+          }catch(e){}
           // hide logout button and show auth overlay
           try{ logoutBtn.style.display='none'; }catch(e){}
           showAuthOverlay(); drawMenu();
